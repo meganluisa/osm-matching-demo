@@ -2,8 +2,6 @@ import streamlit as st
 import pydeck as pdk
 import json
 import pandas as pd
-import geopandas as gpd
-from shapely.geometry import LineString
 import requests
 
 # SETUP VARS AND DATA
