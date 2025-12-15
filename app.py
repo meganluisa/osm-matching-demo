@@ -4,7 +4,10 @@ import json
 import pandas as pd
 import requests
 
+# ------------------------------------------
 # SETUP VARS AND DATA
+st.set_page_config(layout="wide")  # Use wide layout
+
 with open('sd_roads.json') as f:
     json_data = json.load(f)
 
@@ -65,23 +68,21 @@ def filter_by_nodes(df, target_nodes):
         target_nodes: set or list of node IDs to search for
     
     Returns:
-        Filtered DataFrame
+        matched_df: DataFrame of local roads that match the route
     """
     if not isinstance(target_nodes, set):
         target_nodes = set(target_nodes)
-    
-
     df_with_sets = prepare_dataframe_nodes(df)
     
-
-    mask = df_with_sets['nodes_set'].apply(lambda x: bool(x & target_nodes))
-    filtered_df = df_with_sets[mask].copy()
+    # create dataframe with matched nodes
+    matched_df = df_with_sets[df_with_sets['nodes_set'].apply(lambda x: bool(x & target_nodes))]
     
-    # Drop the helper column from result
-    if 'nodes_set' in filtered_df.columns:
-        filtered_df = filtered_df.drop('nodes_set', axis=1)
+    st.write(f"Matched DataFrame ({len(matched_df)} rows):")
+    matched_df
     
-    return filtered_df
+    matched_df = matched_df.drop('nodes_set', axis=1)
+    
+    return matched_df
 
 
 
@@ -130,7 +131,8 @@ if st.button("Get Route"):
         params = {
             "access_token": mapbox_token,
             "geometries": "geojson",  
-            "overview": "full" 
+            "overview": "full",
+            "steps": "true" 
         }
         
         try:
@@ -141,40 +143,10 @@ if st.button("Get Route"):
             
             if data.get("code") == "Ok" and data.get("routes"):
                 route = data["routes"][0]
+                st.session_state['mapbox_data'] = data
+                st.session_state['full_route_geometry'] = route["geometry"]["coordinates"]
                 
-                # Extract the coordinates from the route geometry
-                coordinates = route["geometry"]["coordinates"]
-                
-                st.success(f"Route found! {len(coordinates)} coordinate points extracted.")
-                
-                st.subheader("Route Information")
-                st.write(f"**Distance:** {route['distance'] / 1000:.2f} km")
-                st.write(f"**Duration:** {route['duration'] / 60:.1f} minutes")
-                
-                st.subheader("Extracted Coordinates")
-                st.write(f"Total points: {len(coordinates)}")
-                
-                with st.expander("Preview Coordinates (first 10)"):
-                    for i, coord in enumerate(coordinates[:10]):
-                        st.write(f"Point {i+1}: [{coord[0]:.6f}, {coord[1]:.6f}]")
-                
-                st.session_state['route_coordinates'] = coordinates
-                
-
-                with st.expander("Full Coordinates (JSON format)"):
-                    st.json(coordinates)
-                
-                coords_json = json.dumps(coordinates, indent=2)
-                st.download_button(
-                    label="Download Coordinates as JSON",
-                    data=coords_json,
-                    file_name="route_coordinates.json",
-                    mime="application/json"
-                )
-                
-                st.info("✓ Coordinates saved to session state as 'route_coordinates'")
-                st.code("coordinates = st.session_state['route_coordinates']")
-                st.write(st.session_state['route_coordinates'])
+                st.success("Route found! Configure extraction options below.")
                 
             else:
                 st.error(f"No route found. Error: {data.get('message', 'Unknown error')}")
@@ -185,52 +157,60 @@ if st.button("Get Route"):
             st.error(f"Error: {str(e)}")
 
 
-# Add Map Matching OSRM Section
+# Route processing & display
+if 'mapbox_data' in st.session_state:
+    data = st.session_state['mapbox_data']
+    route = data["routes"][0]
+    
+    st.subheader("Route Information")
+    st.write(f"**Distance:** {route['distance'] / 1000:.2f} km")
+    st.write(f"**Duration:** {route['duration'] / 60:.1f} minutes")
+
+    st.divider()
+    st.subheader("1. Extract Coordinates")
+    
+    extraction_mode = st.radio(
+        "Coordinate Source",
+        ["Routeline Geometry (Full)", "Step Maneuvers", "Intersections"],
+        help="Choose which coordinates to extract from the Mapbox response for matching."
+    )
+    
+    extracted_coords = []
+    
+    if extraction_mode == "Routeline Geometry (Full)":
+        extracted_coords = route["geometry"]["coordinates"]
+        
+    elif extraction_mode == "Step Maneuvers":
+        for leg in route.get('legs', []):
+            for step in leg.get('steps', []):
+                if 'maneuver' in step and 'location' in step['maneuver']:
+                    extracted_coords.append(step['maneuver']['location'])
+                    
+    elif extraction_mode == "Intersections":
+        for leg in route.get('legs', []):
+            for step in leg.get('steps', []):
+                for intersection in step.get('intersections', []):
+                    if 'location' in intersection:
+                        extracted_coords.append(intersection['location'])
+
+    # Update session state with extracted coords
+    st.session_state['route_coordinates'] = extracted_coords
+
+    st.write(f"**Extracted Points:** {len(extracted_coords)}")
+    
+    with st.expander("View Full Mapbox API Response"):
+        st.json(data)
+
+    coords_string = ";".join([f"{c[0]},{c[1]}" for c in extracted_coords])
+    
+    st.info("Copy coordinates for OSRM API request:")
+    st.code(coords_string, language="text")
+
 st.divider()
-st.subheader("Map Matching with OSRM")
 
-if 'route_coordinates' in st.session_state:
-  st.info(f"Route has ${len(st.session_state['route_coordinates'])} coordinate points. OSRM may limit to ~100 points.")
 
-  max_coords = st.number_input("Max coordinates to send to OSRM", min_value=1, max_value=len(st.session_state['route_coordinates']), value=min(100, len(st.session_state['route_coordinates'])))
-
-  if st.button("Get Way IDs via OSRM Map Matching"):
-    if len(st.session_state['route_coordinates']) > max_coords:
-      step = len(st.session_state['route_coordinates']) // max_coords
-      sampled_coords = st.session_state['route_coordinates'][::step][:max_coords]
-    else:
-      sampled_coords = st.session_state['route_coordinates']
-
-    coord_string = ";".join([f"{lon},{lat}" for lon, lat in sampled_coords])
-    st.write(len(sampled_coords))
-    st.write(coord_string)
-  
-    osrm_url = f"https://router.project-osrm.org/match/v1/driving/{coord_string}?steps=false&geometries=geojson&overview=full&annotations=nodes"
-  
-    try:
-      with st.spinner("Matching route to OSM road network..."):
-        print(f"Sending request to: {osrm_url}")
-        osrm_response = requests.get(osrm_url)
-        print(f"Response status: {osrm_response.status_code}")
-        osrm_response.raise_for_status()
-        osrm_data = osrm_response.json()
-        st.session_state['osrm_data'] = osrm_data
-        target_nodes = extract_node_ids(osrm_data)
-        st.write(f"Found {len(target_nodes)} unique node IDs from API")
-
-        with st.spinner("Filtering rows..."):
-          filtered_df = filter_by_nodes(df, target_nodes)
-        st.success(f"Found {len(filtered_df)} matching rows")
-        st.session_state['filtered_df'] = filtered_df
-        st.session_state['target_nodes'] = target_nodes
-        filtered_df
-    except requests.exceptions.RequestException as e:
-      st.error(f"API request failed: {str(e)}")
-    except Exception as e:
-      st.error(f"Error: {str(e)}")
-
-st.subheader("Layer Controls")
-col1, col2 = st.columns(2)
+st.write("Layer Controls")
+col1, col2 = st.columns(2, width=250, gap="small")
 with col1:
     show_roads = st.checkbox("Show OSM Roads", value=True)
 with col2:
@@ -240,38 +220,111 @@ with col2:
 layers = []
 highlight_layer = None
 selected_way_ids = []
-if 'filtered_df' in st.session_state and not st.session_state['filtered_df'].empty:
-    st.subheader("Matched ways (select rows to highlight on map)")
-    node_filter = st.text_input("Filter table by Node ID (paste from tooltip)", "")
 
-    table_df = st.session_state['filtered_df'][['id', 'nodes']].copy()
-    display_df = table_df.copy()
-    display_df['id_str'] = display_df['id'].astype(str)
-    display_df['nodes_str'] = display_df['nodes'].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, (list, tuple, set)) else str(x))
+map_col, table_col = st.columns([3, 2])
 
-    if node_filter.strip():
-        table_df = table_df[table_df['nodes'].apply(lambda ns: any(node_filter in str(n) for n in ns))]
-        display_df = display_df.loc[table_df.index]
 
-    st.data_editor(
-        display_df[['id_str', 'nodes_str']],
-        hide_index=True,
-        key="matched_table",
-        use_container_width=True,
-        num_rows="dynamic",
-        disabled=True,
-        column_config={
-            "id_str": st.column_config.TextColumn("Way ID"),
-            "nodes_str": st.column_config.TextColumn("Node IDs")
-        }
-    )
+# --- DATA PREPARATION FOR LAYERS ---
 
-    selected_way_ids = st.multiselect(
-        "Highlight way IDs",
-        options=table_df['id'].tolist(),
-        default=[]
-    )
+if 'matched_df' in st.session_state and not st.session_state['matched_df'].empty:
+    with table_col:
+        st.subheader("Map Matching with OSRM")
+        if 'route_coordinates' in st.session_state:
+            st.info(f"Route has ${len(st.session_state['route_coordinates'])} coordinate points. OSRM limits to ~100 points.")
 
+            max_coords = st.number_input("Max coordinates to send to OSRM", min_value=1, max_value=len(st.session_state['route_coordinates']), value=min(100, len(st.session_state['route_coordinates'])))
+
+            if st.button("Get OSM IDs via OSRM Map Matching"):
+              if len(st.session_state['route_coordinates']) > max_coords:
+                step = len(st.session_state['route_coordinates']) // max_coords
+                sampled_coords = st.session_state['route_coordinates'][::step][:max_coords]
+              else:
+                sampled_coords = st.session_state['route_coordinates']
+
+              coord_string = ";".join([f"{lon},{lat}" for lon, lat in sampled_coords])
+            #   st.write(len(sampled_coords))
+
+              osrm_url = f"https://router.project-osrm.org/match/v1/driving/{coord_string}?steps=false&geometries=geojson&overview=full&annotations=nodes"
+
+              try:
+                with st.spinner("Matching route to OSM road network..."):
+                  print(f"Sending request to: {osrm_url}")
+                  osrm_response = requests.get(osrm_url)
+                  print(f"Response status: {osrm_response.status_code}")
+                  osrm_response.raise_for_status()
+                  osrm_data = osrm_response.json()
+                  st.session_state['osrm_data'] = osrm_data
+                  st.session_state['sampled_coords'] = sampled_coords
+
+                  tracepoints = osrm_data.get('tracepoints', [])
+                  unmatched_rows = []
+                  for i, (tp, coord) in enumerate(zip(tracepoints, sampled_coords)):
+                      if tp is None:
+                          unmatched_rows.append({
+                              "original_index": i, 
+                              "longitude": coord[0], 
+                              "latitude": coord[1]
+                          })
+
+                  not_matched_df = pd.DataFrame(unmatched_rows)
+                  st.write(f"Not Matched Coordinates ({len(not_matched_df)} rows):")
+                  if not not_matched_df.empty:
+                      st.dataframe(not_matched_df)
+                  else:
+                      st.info("All coordinates matched successfully!")
+
+                  st.session_state['not_matched_df'] = not_matched_df
+
+                  target_nodes = extract_node_ids(osrm_data)
+                  st.write(f"Found {len(target_nodes)} unique node IDs from API")
+
+                  with st.spinner("Filtering rows..."):
+                    matched_df = filter_by_nodes(df, target_nodes)
+
+                  st.success(f"Found {len(matched_df)} matching rows in local DB")
+                  st.session_state['matched_df'] = matched_df
+                  st.session_state['target_nodes'] = target_nodes
+                  matched_df
+
+              except requests.exceptions.RequestException as e:
+                st.error(f"API request failed: {str(e)}")
+              except Exception as e:
+                st.error(f"Error: {str(e)}")
+
+        st.divider()
+        st.subheader("Matched Ways Table")
+        node_filter = st.text_input("Filter by Node/Way ID", "", help="Type an ID here to filter the table. You can read IDs from the map tooltip.")
+
+        table_df = st.session_state['matched_df'][['id', 'nodes']].copy()
+        display_df = table_df.copy()
+        display_df['id_str'] = display_df['id'].astype(str)
+
+        if node_filter.strip():
+            # Filter logic: Check if filter string is in ID or any Node ID
+            mask_id = display_df['id_str'].str.contains(node_filter)
+            mask_nodes = table_df['nodes'].apply(lambda ns: any(node_filter in str(n) for n in ns))
+            display_df = display_df[mask_id | mask_nodes]
+
+        st.data_editor(
+            display_df[['id_str', 'nodes']],
+            hide_index=True,
+            key="matched_table",
+            use_container_width=True,
+            num_rows="dynamic",
+            disabled=True,
+            column_config={
+                "id_str": st.column_config.TextColumn("Way ID"),
+                "nodes": st.column_config.ListColumn("Node IDs")
+            }
+        )
+
+        selected_way_ids = st.multiselect(
+            "Highlight specific ways",
+            options=table_df['id'].tolist(),
+            default=[]
+        )
+
+    # Add highlight layer based on multiselect
     if selected_way_ids:
         highlight_features = []
         for feat in geojson_data.get('features', []):
@@ -289,17 +342,13 @@ if 'filtered_df' in st.session_state and not st.session_state['filtered_df'].emp
                 filled=False,
                 extruded=False,
                 get_line_color=[0, 0, 255],
-                get_line_width=60,
+                get_line_width=50,
                 line_width_min_pixels=4,
                 pickable=True,
                 auto_highlight=True
             )
             layers.append(highlight_layer)
-            st.info(f"Highlighting {len(highlight_features)} selected way(s)")
-        else:
-            st.info("No matching features found for selected IDs")
-    else:
-        st.caption("Select one or more rows to highlight.")
+
 
 # Base layer: all roads
 if show_roads:
@@ -311,7 +360,7 @@ if show_roads:
         filled=False,
         extruded=False,
         wireframe=True,
-        get_line_color=[255, 0, 0],
+        get_line_color=[242, 251, 224],
         get_line_width=20,
         line_width_min_pixels=2,
         pickable=True,
@@ -319,59 +368,109 @@ if show_roads:
     )
     layers.append(base_layer)
 
+        # Mapbox route line
+    if 'full_route_geometry' in st.session_state:
+        route_line_layer = pdk.Layer(
+            "PathLayer",
+            data=[{"path": st.session_state['full_route_geometry']}],
+            pickable=True,
+            get_color=[0, 0, 255, 100],
+            width_scale=1,
+            width_min_pixels=3,
+            get_path="path",
+            get_width=10
+        )
+        layers.append(route_line_layer)
+
+    # Mapbox extracted coordinates
+    if 'route_coordinates' in st.session_state:
+        points_data = [{"pos": c} for c in st.session_state['route_coordinates']]
+        extracted_points_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=points_data,
+            get_position="pos",
+            get_color=[0, 100, 255, 200], 
+            get_radius=8,
+            radius_min_pixels=3,
+            radius_max_pixels=8,
+            pickable=True,
+            auto_highlight=True
+        )
+        layers.append(extracted_points_layer)
+
+
 # Tracepoints layer (if OSRM data available)
 if show_tracepoints and 'osrm_data' in st.session_state:
     tracepoints = st.session_state['osrm_data'].get('tracepoints', [])
     matchings = st.session_state['osrm_data'].get('matchings', [])
-    # add node ids from the matchings 'legs' annotation object
-    legs = matchings[0].get('legs', [])
-    print(legs)
-    if tracepoints:
+    sampled_coords = st.session_state.get('sampled_coords', [])
+    
+    # Add node ids from the matchings 'legs' annotation object
+    legs = matchings[0].get('legs', []) if matchings else []
+    
+    if tracepoints and sampled_coords:
+        
         tracepoints_geojson = {
             "type": "FeatureCollection",
             "features": []
         }
-        
-        for tp in tracepoints:
 
-            if tp is not None: 
+        # Iterate over both the original input coordinates and the returned tracepoints
+        for i, (tp, coord) in enumerate(zip(tracepoints, sampled_coords)):
+            is_match = tp is not None
+            
+            props = {
+                "name": f"Point {i}",
+                "waypoint_index": str(i),
+                "distance": "N/A",
+                "nodes": [],
+                "is_match": is_match,
+                "tooltip_html": f"<b>Point {i}</b><br/>Status: {'Matched' if is_match else 'Unmatched'}<br/>Coord: [{coord[0]:.5f}, {coord[1]:.5f}]"
+            }
+            
+            # If matched, update properties with OSRM data
+            if is_match:
                 waypoint_idx = tp.get('waypoint_index', -1)
                 relevant_nodes = []
                 if waypoint_idx >= 0 and waypoint_idx < len(legs):
-                  relevant_nodes = legs[waypoint_idx].get('annotation', {}).get('nodes', [])
-
-                waypoint_idx_str = str(tp.get('waypoint_index', -1))
+                    relevant_nodes = legs[waypoint_idx].get('annotation', {}).get('nodes', [])
+                    relevant_nodes = sorted(list(set([int(n) for n in relevant_nodes])))
+                    print(f"Relevant nodes: {relevant_nodes}")
                 distance_str = f"{tp.get('distance', 0):.1f}m"
-                feature = {
-                    "type": "Feature",
-                    "properties": {
-                        "name": tp.get('name', 'Unknown'),
-                        "waypoint_index": waypoint_idx_str,
-                        "distance": distance_str,
-                        "nodes": relevant_nodes,
-                        "tooltip_html": f"<b>{tp.get('name', 'Unknown')}</b><br/>Waypoint Index: {waypoint_idx_str}<br/>Distance: {distance_str}<br/>Node IDs: {relevant_nodes}"
-                    },
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": tp['location']
-                    }
-                }
-                tracepoints_geojson['features'].append(feature)
-        
-        print(tracepoints_geojson)
+                props.update({
+                    "name": tp.get('name', 'Unknown'),
+                    "distance": distance_str,
+                    "nodes": relevant_nodes,
+                    "tooltip_html": f"<b>{tp.get('name', 'Unknown')}</b><br/>Status: Matched<br/>Waypoint Index: {waypoint_idx}<br/>Distance: {distance_str}<br/>Node IDs: {relevant_nodes}"
+                })
+                # Use the SNAPPED location for matched points
+                location = tp['location']
+            else:
+                # Use the ORIGINAL input location for unmatched points
+                location = list(coord)
 
-        with st.expander("Debug: Tracepoints GeoJSON"):
-            st.json(tracepoints_geojson)
+            feature = {
+                "type": "Feature",
+                "properties": props,
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": location
+                }
+            }
+            tracepoints_geojson['features'].append(feature)
+        
+        tracepoints_data = tracepoints_geojson
         
         tracepoints_layer = pdk.Layer(
             'GeoJsonLayer',
-            data=tracepoints_geojson,
+            data=tracepoints_data,
             opacity=0.9,
             stroked=True,
             filled=True,
             extruded=False,
-            get_fill_color=[0, 255, 0], 
-            get_line_color=[0, 200, 0],
+            get_fill_color="[properties.is_match ? 0 : 255, properties.is_match ? 255 : 0, 0]",
+            get_line_color=[0, 0, 0],
+            get_line_width=2, 
             point_radius_min_pixels=6,
             point_radius_max_pixels=12,
             pickable=True,
@@ -379,33 +478,37 @@ if show_tracepoints and 'osrm_data' in st.session_state:
         )
         layers.append(tracepoints_layer)
         
-        st.info(f"Showing {len(tracepoints_geojson['features'])} tracepoints")
+        st.info(f"Showing {len(tracepoints_geojson['features'])} tracepoints (Green=Matched, Red=Unmatched)")
 
 
 
+# --- MAP COLUMN ---
 
+with map_col:
+    view_state = pdk.ViewState(
+        latitude=32.73,
+        longitude=-117.14,
+        zoom=12,
+        pitch=0,
+        bearing=0
+    )
 
-view_state = pdk.ViewState(
-    latitude=32.73,
-    longitude=-117.14,
-    zoom=12,
-    pitch=0,
-    bearing=0
-)
+    r = pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_style=None,
+        tooltip={
+            "html": "{tooltip_html}",
+            "style": {
+                "backgroundColor": "steelblue",
+                "color": "white",
+            }
+        },
 
+    )
 
-# Render with selected layers
-r = pdk.Deck(
-    layers=layers,
-    initial_view_state=view_state,
-    map_style=None,
-    tooltip={
-        "html": "{tooltip_html}",
-        "style": {"backgroundColor": "steelblue", "color": "white"}
-    }
-)
+    st.pydeck_chart(r, use_container_width=True)
 
-st.pydeck_chart(r)
 
 if st.button("Reset cache"):
   st.session_state.nodes_sets_computed = False
