@@ -208,15 +208,6 @@ if 'mapbox_data' in st.session_state:
 
 st.divider()
 
-
-st.write("Layer Controls")
-col1, col2 = st.columns(2, width=250, gap="small")
-with col1:
-    show_roads = st.checkbox("Show OSM Roads", value=True)
-with col2:
-    show_tracepoints = st.checkbox("Show OSRM Tracepoints", value=True)
-
-
 layers = []
 highlight_layer = None
 selected_way_ids = []
@@ -228,7 +219,7 @@ map_col, table_col = st.columns([3, 2])
 
 if 'matched_df' in st.session_state and not st.session_state['matched_df'].empty:
     with table_col:
-        st.subheader("Map Matching with OSRM")
+        st.subheader("2. Map Matching with OSRM")
         if 'route_coordinates' in st.session_state:
             st.info(f"Route has ${len(st.session_state['route_coordinates'])} coordinate points. OSRM limits to ~100 points.")
 
@@ -284,7 +275,6 @@ if 'matched_df' in st.session_state and not st.session_state['matched_df'].empty
                   st.success(f"Found {len(matched_df)} matching rows in local DB")
                   st.session_state['matched_df'] = matched_df
                   st.session_state['target_nodes'] = target_nodes
-                  matched_df
 
               except requests.exceptions.RequestException as e:
                 st.error(f"API request failed: {str(e)}")
@@ -292,7 +282,7 @@ if 'matched_df' in st.session_state and not st.session_state['matched_df'].empty
                 st.error(f"Error: {str(e)}")
 
         st.divider()
-        st.subheader("Matched Ways Table")
+        st.subheader("Matched Nodes Table")
         node_filter = st.text_input("Filter by Node/Way ID", "", help="Type an ID here to filter the table. You can read IDs from the map tooltip.")
 
         table_df = st.session_state['matched_df'][['id', 'nodes']].copy()
@@ -351,7 +341,7 @@ if 'matched_df' in st.session_state and not st.session_state['matched_df'].empty
 
 
 # Base layer: all roads
-if show_roads:
+if st.session_state.get('show_roads', True):
     base_layer = pdk.Layer(
         'GeoJsonLayer',
         data=geojson_data,
@@ -400,7 +390,7 @@ if show_roads:
 
 
 # Tracepoints layer (if OSRM data available)
-if show_tracepoints and 'osrm_data' in st.session_state:
+if st.session_state.get('show_tracepoints', True) and 'osrm_data' in st.session_state:
     tracepoints = st.session_state['osrm_data'].get('tracepoints', [])
     matchings = st.session_state['osrm_data'].get('matchings', [])
     sampled_coords = st.session_state.get('sampled_coords', [])
@@ -508,6 +498,12 @@ with map_col:
     )
 
     st.pydeck_chart(r, use_container_width=True)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.show_roads = st.checkbox("Show OSM Roads", value=st.session_state.get('show_roads', True))
+    with col2:
+        st.session_state.show_tracepoints = st.checkbox("Show OSRM Tracepoints", value=st.session_state.get('show_tracepoints', True))
 
 
 if st.button("Reset cache"):
