@@ -3,6 +3,7 @@ import pydeck as pdk
 import json
 import pandas as pd
 import requests
+import time
 
 # ------------------------------------------
 # SETUP VARS AND DATA
@@ -215,76 +216,74 @@ layers = []
 highlight_layer = None
 selected_way_ids = []
 
+
+st.subheader("2. Map Matching with OSRM")
+if 'route_coordinates' in st.session_state:
+    st.info(f"Route has {len(st.session_state['route_coordinates'])} coordinate points. OSRM limits to ~100 points.")
+    max_coords = 100
+    if st.button("Get OSM IDs via OSRM Map Matching"):
+        if len(st.session_state['route_coordinates']) > max_coords:
+            step = len(st.session_state['route_coordinates']) // max_coords
+            sampled_coords = st.session_state['route_coordinates'][::step][:max_coords]
+        else:
+            sampled_coords = st.session_state['route_coordinates']
+        coord_string = ";".join([f"{lon},{lat}" for lon, lat in sampled_coords])
+        osrm_url = f"https://router.project-osrm.org/match/v1/driving/{coord_string}?steps=false&geometries=geojson&overview=full&annotations=nodes"
+        try:
+            with st.spinner("Matching route to OSM road network..."):
+                print(f"Sending request to: {osrm_url}")                    
+                start_time = time.time()
+                osrm_response = requests.get(osrm_url)
+                end_time = time.time()
+                elapsed_ms = (end_time - start_time) * 1000                    
+                print(f"Response status: {osrm_response.status_code}")
+                osrm_response.raise_for_status()
+                osrm_data = osrm_response.json()
+                st.session_state['osrm_data'] = osrm_data
+                st.session_state['sampled_coords'] = sampled_coords
+                tracepoints = osrm_data.get('tracepoints', [])
+                unmatched_rows = []
+                for i, (tp, coord) in enumerate(zip(tracepoints, sampled_coords)):
+                    if tp is None:
+                        unmatched_rows.append({
+                            "original_index": i, 
+                            "longitude": coord[0], 
+                            "latitude": coord[1]
+                        })
+                not_matched_df = pd.DataFrame(unmatched_rows)
+                if not not_matched_df.empty:
+                    st.write(f"Not Matched Coordinates ({len(not_matched_df)} rows):")
+                    st.dataframe(not_matched_df)
+                else:
+                    st.success("All coordinates matched successfully!")
+                st.session_state['not_matched_df'] = not_matched_df
+                target_nodes = extract_node_ids(osrm_data)
+                st.info(f"Found {len(target_nodes)} unique node IDs from OSRM API response ({elapsed_ms:.0f} ms)")
+                
+                # Perform filtering immediately and store in session state
+                with st.spinner("Filtering rows..."):
+                    matched_df = filter_by_nodes(df, target_nodes)
+                # st.success(f"Found {len(matched_df)} matching rows in local DB")
+                st.session_state['matched_df'] = matched_df
+                st.session_state['target_nodes'] = target_nodes
+                
+        except requests.exceptions.RequestException as e:
+            st.error(f"API request failed: {str(e)}")
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
+
+st.divider()
+
+# --- MAP AND TABLE COLUMNS ---
 map_col, table_col = st.columns([3, 2])
 
-
 # --- TABLE COLUMN LOGIC ---
-
 with table_col:
-    # OSRM Matching UI logic inside the table column
-    st.subheader("2. Map Matching with OSRM")
-    if 'route_coordinates' in st.session_state:
-        st.info(f"Route has {len(st.session_state['route_coordinates'])} coordinate points. OSRM limits to ~100 points.")
-
-        # max_coords = st.number_input("Max coordinates to send to OSRM", min_value=1, max_value=len(st.session_state['route_coordinates']), value=min(100, len(st.session_state['route_coordinates'])))
-        max_coords = 100
-        if st.button("Get OSM IDs via OSRM Map Matching"):
-            if len(st.session_state['route_coordinates']) > max_coords:
-                step = len(st.session_state['route_coordinates']) // max_coords
-                sampled_coords = st.session_state['route_coordinates'][::step][:max_coords]
-            else:
-                sampled_coords = st.session_state['route_coordinates']
-
-            coord_string = ";".join([f"{lon},{lat}" for lon, lat in sampled_coords])
-            osrm_url = f"https://router.project-osrm.org/match/v1/driving/{coord_string}?steps=false&geometries=geojson&overview=full&annotations=nodes"
-
-            try:
-                with st.spinner("Matching route to OSM road network..."):
-                    print(f"Sending request to: {osrm_url}")
-                    osrm_response = requests.get(osrm_url)
-                    print(f"Response status: {osrm_response.status_code}")
-                    osrm_response.raise_for_status()
-                    osrm_data = osrm_response.json()
-                    st.session_state['osrm_data'] = osrm_data
-                    st.session_state['sampled_coords'] = sampled_coords
-
-                    tracepoints = osrm_data.get('tracepoints', [])
-                    unmatched_rows = []
-                    for i, (tp, coord) in enumerate(zip(tracepoints, sampled_coords)):
-                        if tp is None:
-                            unmatched_rows.append({
-                                "original_index": i, 
-                                "longitude": coord[0], 
-                                "latitude": coord[1]
-                            })
-
-                    not_matched_df = pd.DataFrame(unmatched_rows)
-                    st.write(f"Not Matched Coordinates ({len(not_matched_df)} rows):")
-                    if not not_matched_df.empty:
-                        st.dataframe(not_matched_df)
-                    else:
-                        st.info("All coordinates matched successfully!")
-
-                    st.session_state['not_matched_df'] = not_matched_df
-
-                    target_nodes = extract_node_ids(osrm_data)
-                    st.write(f"Found {len(target_nodes)} unique node IDs from OSRM API response")
-
-                    with st.spinner("Filtering rows..."):
-                        matched_df = filter_by_nodes(df, target_nodes)
-
-                    st.success(f"Found {len(matched_df)} matching rows in local DB")
-                    st.session_state['matched_df'] = matched_df
-                    st.session_state['target_nodes'] = target_nodes
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"API request failed: {str(e)}")
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-
+    st.subheader("3. Query Local Table for Matching OSM Node IDs")
+    
     if 'matched_df' in st.session_state and not st.session_state['matched_df'].empty:
-        
-        node_filter = st.text_input("Filter Matched Nodes/Way IDs", "", help="Type an ID here to filter the table. You can read IDs from the map tooltip on hover.")
+        count = len(st.session_state['matched_df'])
+        node_filter = st.text_input(f"Filter Matched Nodes/Way IDs ({count} matching rows in local DB)", "", help="Type an ID here to filter the table. You can read IDs from the map tooltip on hover.")
 
         table_df = st.session_state['matched_df'][['id', 'nodes', 'tags']].copy()
         display_df = table_df.copy()
@@ -315,6 +314,8 @@ with table_col:
             options=table_df['id'].tolist(),
             default=[]
         )
+    else:
+        st.info("Run map matching in step 2 to see results here.")
 
     # Add highlight layer based on multiselect
     if selected_way_ids:
