@@ -514,7 +514,7 @@ with map_col:
             
         st.checkbox("Show OSRM Tracepoints", value=st.session_state.show_tracepoints, key="show_tracepoints_toggle", on_change=update_tracepoints)
 
-    st.info(f"Showing {len(tracepoints_geojson['features'])} tracepoints (Green=Matched, Red=Unmatched)")
+    st.info(f"Showing {len(tracepoints_data['features'])} tracepoints (Green=Matched, Red=Unmatched)")
 
 if st.button("Reset cache"):
   st.session_state.nodes_sets_computed = False
