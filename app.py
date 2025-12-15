@@ -99,7 +99,7 @@ df = st.session_state.df
 st.title("Match Mapbox Directions API Response to the OSM Road Network")
 
 
-mapbox_token = st.text_input("Mapbox Access Token", value="pk.eyJ1IjoibWJ4c29sdXRpb25zIiwiYSI6ImNqeWhpandmazAyYmYzYnBtZzJxM3hlM2EifQ.ZLKIqBxG97_HklFj0_1RBQ", type="password")
+mapbox_token = st.text_input("Mapbox Access Token", value="pk.eyJ1IjoibWJ4c29sdXRpb25zIiwiYSI6ImNtajZ3dmFkNDAweDUzZ29hd3JlM2JnazgifQ.HqVCvSFi7iP34c900ypopg", type="password")
 
 # Input origin and destination
 col1, col2 = st.columns(2)
