@@ -300,7 +300,7 @@ with table_col:
             display_df[['id_str', 'nodes', 'tags']],
             hide_index=True,
             key="matched_table",
-            use_container_width=True,
+            width='stretch',
             num_rows="dynamic",
             disabled=True,
             column_config={
@@ -499,7 +499,7 @@ with map_col:
 
     )
 
-    st.pydeck_chart(r, use_container_width=True)
+    st.pydeck_chart(r, width='stretch')
 
     col1, col2 = st.columns(2)
     with col1:
