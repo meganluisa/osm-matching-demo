@@ -103,8 +103,8 @@ df = st.session_state.df
 st.title("Match Mapbox Directions API Response to the OSM Road Network")
 
 
-mapbox_token = st.text_input("Mapbox Access Token", value="pk.eyJ1IjoibWJ4c29sdXRpb25zIiwiYSI6ImNtajZ3dmFkNDAweDUzZ29hd3JlM2JnazgifQ.HqVCvSFi7iP34c900ypopg", type="password")
-
+# mapbox_token = st.text_input("Mapbox Access Token", value="pk.eyJ1IjoibWJ4c29sdXRpb25zIiwiYSI6ImNtajZ3dmFkNDAweDUzZ29hd3JlM2JnazgifQ.HqVCvSFi7iP34c900ypopg", type="password")
+mapbox_token="pk.eyJ1IjoibWJ4c29sdXRpb25zIiwiYSI6ImNtajZ3dmFkNDAweDUzZ29hd3JlM2JnazgifQ.HqVCvSFi7iP34c900ypopg"
 # Input origin and destination
 col1, col2 = st.columns(2)
 
@@ -260,10 +260,8 @@ if 'route_coordinates' in st.session_state:
                 target_nodes = extract_node_ids(osrm_data)
                 st.info(f"Found {len(target_nodes)} unique node IDs from OSRM API response ({elapsed_ms:.0f} ms)")
                 
-                # Perform filtering immediately and store in session state
                 with st.spinner("Filtering rows..."):
                     matched_df = filter_by_nodes(df, target_nodes)
-                # st.success(f"Found {len(matched_df)} matching rows in local DB")
                 st.session_state['matched_df'] = matched_df
                 st.session_state['target_nodes'] = target_nodes
                 
