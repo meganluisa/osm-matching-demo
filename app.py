@@ -364,7 +364,7 @@ if st.session_state.show_roads:
         route_line_layer = pdk.Layer(
             "PathLayer",
             data=[{"path": st.session_state['full_route_geometry']}],
-            pickable=True,
+            pickable=False,
             get_color=[0, 0, 255, 100],
             width_scale=1,
             width_min_pixels=5,
@@ -384,7 +384,7 @@ if st.session_state.show_roads:
             get_radius=8,
             radius_min_pixels=3,
             radius_max_pixels=8,
-            pickable=True,
+            pickable=False,
             auto_highlight=True
         )
         layers.append(extracted_points_layer)
