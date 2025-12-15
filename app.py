@@ -203,7 +203,7 @@ if 'mapbox_data' in st.session_state:
 
     coords_string = ";".join([f"{c[0]},{c[1]}" for c in extracted_coords])
     
-    st.info("Copy coordinates for OSRM API request:")
+    st.info("(Optional) Copy coordinates for OSRM API request:")
     st.code(coords_string, language="text")
 
 st.divider()
